@@ -97,7 +97,11 @@ class SpendingChange:
     def text(self) -> str:
         if self.action == "stop":
             return f"stop:{self.event_id}"
-        return f"reduce_to:{self.event_id}:{format_decimal(self.new_amount)}"
+        if self.new_amount == self.new_amount.to_integral_value():
+            amount = format_decimal(self.new_amount)
+        else:
+            amount = format_decimal(self.new_amount, two_places=True)
+        return f"reduce_to:{self.event_id}:{amount}"
 
 
 @dataclass

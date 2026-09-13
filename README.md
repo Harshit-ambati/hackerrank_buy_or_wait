@@ -41,10 +41,12 @@ On Windows PowerShell, the same commands work with `python` and backslashes.
 1. Load and type-check profiles, requests, financial events, payment options,
    dated exchange rates, messages, and image links.
 2. Fill the 16 image-backed blank event amounts from reviewed evidence facts.
-3. Resolve cash state: reserve pending debits, ignore pending credits, cancelled
-   records, failures without a retry notice, and unrealized investments.
-4. Infer supported monthly commitments and salary cycles. Message amendments can
-   move or replace the next payroll, stop ended income, or adjust recurring rent.
+3. Resolve cash state and linked lifecycles: reserve pending debits once, ignore
+   pending credits, cancelled authorizations, refunded charges, and unrealized
+   investments, and avoid double-counting a failed debit with its scheduled retry.
+4. Infer supported monthly commitments and salary cycles. Message evidence can
+   move or replace payroll, stop ended income, add one-time arrears or approved
+   invoice income, convert dated foreign salary, or adjust recurring rent.
 5. Forecast fixed commitments and calendar-shaped variable spending for 90 days.
 6. Compute safe capacity and evaluate full, partial, installment, wait, and
    permitted spending-change candidates.

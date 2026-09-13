@@ -13,6 +13,7 @@ from pathlib import Path
 from .evidence import (
     IMAGE_AMOUNTS,
     failed_debit_remains_due,
+    parse_confirmed_incomes,
     parse_rent_increase,
     parse_salary_evidence,
     relevant_messages,
@@ -195,12 +196,17 @@ class DecisionEngine:
 
     def _home_amount(self, event: Event, profile: Profile) -> Decimal:
         assert event.amount is not None
-        if event.currency == profile.currency:
-            return event.amount
-        key = (event.settlement_date, event.currency, profile.currency)
+        return self._convert_amount(event.amount, event.currency, profile, event.settlement_date)
+
+    def _convert_amount(
+        self, amount: Decimal, currency: str, profile: Profile, settlement_date: date
+    ) -> Decimal:
+        if currency == profile.currency:
+            return amount
+        key = (settlement_date, currency, profile.currency)
         if key not in self.exchange_rates:
-            raise ValueError(f"Missing exchange rate for {event.event_id}: {key}")
-        return (event.amount * self.exchange_rates[key]).quantize(CENT)
+            raise ValueError(f"Missing exchange rate for {key}")
+        return (amount * self.exchange_rates[key]).quantize(CENT)
 
     @staticmethod
     def _is_monthly(events: list[Event], request_date: date, *, max_staleness: int = 40) -> bool:
@@ -219,6 +225,25 @@ class DecisionEngine:
         profile = self.profiles[request.user_id]
         end = request.request_date + timedelta(days=90)
         user_events = sorted(self.events_by_user[request.user_id], key=lambda item: item.settlement_date)
+        neutralized_debits = {
+            event.linked_event_id
+            for event in user_events
+            if (
+                event.status == "settled"
+                and event.direction == "credit"
+                and event.event_type == "refund"
+                and event.linked_event_id
+            )
+        }
+        scheduled_retry_of = {
+            event.linked_event_id
+            for event in user_events
+            if (
+                event.status == "scheduled"
+                and event.direction == "debit"
+                and event.linked_event_id
+            )
+        }
         messages = relevant_messages(self.messages, request.user_id, request.request_id, request.request_date)
         linked_messages = {message.related_event_id: message for message in messages if message.related_event_id}
         flows: list[CashFlow] = []
@@ -239,7 +264,11 @@ class DecisionEngine:
                 flow_date = max(flow_date, request.request_date)
             elif event.status == "failed" and event.direction == "debit":
                 message = linked_messages.get(event.event_id)
-                if message and failed_debit_remains_due(message):
+                if (
+                    event.event_id not in scheduled_retry_of
+                    and message
+                    and failed_debit_remains_due(message)
+                ):
                     include = True
                     flow_date = request.request_date
             if not include or flow_date > end:
@@ -252,6 +281,32 @@ class DecisionEngine:
             known_category_dates.add((event.direction, event.category, flow_date))
             if event.status == "scheduled" and event.direction == "credit" and event.category == "salary":
                 scheduled_salary_events.append(event)
+
+        # Some approved contract/invoice income exists only in provider
+        # messages. It is usable only when both the amount and settlement date
+        # are explicit; pending or undated app earnings remain excluded.
+        for income in parse_confirmed_incomes(messages):
+            if not (request.request_date <= income.settlement_date <= end):
+                continue
+            amount = self._convert_amount(
+                income.amount, income.currency, profile, income.settlement_date
+            )
+            duplicate = any(
+                flow.flow_date == income.settlement_date
+                and flow.amount == amount
+                and flow.amount > ZERO
+                for flow in flows
+            )
+            if not duplicate:
+                flows.append(
+                    CashFlow(
+                        income.settlement_date,
+                        amount,
+                        income.message_id,
+                        "contract_income",
+                        "Confirmed invoice payment",
+                    )
+                )
 
         history_groups: dict[tuple[str, str, str], list[Event]] = defaultdict(list)
         for event in user_events:
@@ -290,6 +345,7 @@ class DecisionEngine:
         salary_evidence = parse_salary_evidence(messages)
         rent_increase = parse_rent_increase(messages)
         salary_group_seen = False
+        salary_arrears_added = False
         settled_salary_events = [
             event for event in user_events
             if event.status == "settled" and event.direction == "credit"
@@ -331,7 +387,12 @@ class DecisionEngine:
                     if salary_evidence.stopped:
                         continue
                     if salary_evidence.amount is not None:
-                        amount = salary_evidence.amount
+                        amount = self._convert_amount(
+                            salary_evidence.amount,
+                            salary_evidence.currency or profile.currency,
+                            profile,
+                            salary_evidence.effective_date or next_date,
+                        )
                     if salary_evidence.effective_date is not None:
                         next_date = salary_evidence.effective_date
                 elif scheduled_salary_events:
@@ -363,6 +424,31 @@ class DecisionEngine:
                     )
                 current_date = add_months(current_date)
 
+            if (
+                category == "salary"
+                and salary_evidence
+                and salary_evidence.one_time_amount is not None
+                and not salary_arrears_added
+            ):
+                arrears_date = salary_evidence.effective_date or next_date
+                if request.request_date <= arrears_date <= end:
+                    arrears = self._convert_amount(
+                        salary_evidence.one_time_amount,
+                        salary_evidence.one_time_currency or profile.currency,
+                        profile,
+                        arrears_date,
+                    )
+                    flows.append(
+                        CashFlow(
+                            arrears_date,
+                            arrears,
+                            "message_salary_arrears",
+                            "salary",
+                            "Confirmed one-time payroll adjustment",
+                        )
+                    )
+                    salary_arrears_added = True
+
             if direction == "debit" and representative.flexibility != "fixed" and category not in profile.protected_categories:
                 if category in profile.stoppable_categories and representative.flexibility in {"stoppable", "reducible_or_stoppable"}:
                     changes.append(SpendingChange("stop", representative.event_id, amount, ZERO, category))
@@ -390,6 +476,13 @@ class DecisionEngine:
             evidence_amount = salary_evidence.amount
             if evidence_amount is None and settled_salary_events:
                 evidence_amount = self._home_amount(settled_salary_events[-1], profile)
+            elif evidence_amount is not None:
+                evidence_amount = self._convert_amount(
+                    evidence_amount,
+                    salary_evidence.currency or profile.currency,
+                    profile,
+                    salary_evidence.effective_date,
+                )
             if evidence_amount is None:
                 evidence_amount = ZERO
             flow_date = salary_evidence.effective_date
@@ -401,6 +494,22 @@ class DecisionEngine:
                 if salary_evidence.next_only:
                     break
                 flow_date = add_months(flow_date)
+            if salary_evidence.one_time_amount is not None and salary_evidence.effective_date:
+                arrears = self._convert_amount(
+                    salary_evidence.one_time_amount,
+                    salary_evidence.one_time_currency or profile.currency,
+                    profile,
+                    salary_evidence.effective_date,
+                )
+                flows.append(
+                    CashFlow(
+                        salary_evidence.effective_date,
+                        arrears,
+                        "message_salary_arrears",
+                        "salary",
+                        "Confirmed one-time payroll adjustment",
+                    )
+                )
 
         # Preserve the observed intra-month shape of variable spending.  Using
         # the average for each calendar day over the last three complete months
@@ -418,7 +527,9 @@ class DecisionEngine:
                 continue
             if event.event_type in {"investment_purchase", "investment_sale", "investment_valuation", "refund"}:
                 continue
-            if event.linked_event_id or any(word in event.description.lower() for word in ("reversal", "authorization")):
+            if event.event_id in neutralized_debits or any(
+                word in event.description.lower() for word in ("reversal", "authorization")
+            ):
                 continue
             by_month_day[event.settlement_date.day] += self._home_amount(event, profile)
         for day_of_month in list(by_month_day):
@@ -429,11 +540,17 @@ class DecisionEngine:
             if amount:
                 flows.append(CashFlow(flow_date, -amount, "variable_spending", "variable_spending", "Normal variable spending"))
 
-        # A repeated flexible transaction can represent an adjustable budget
-        # even when its cadence is longer or less regular than a subscription.
+        # A repeated flexible category can represent an adjustable budget even
+        # when individual merchant descriptions vary. Expose one action for
+        # the latest evidence row in that category; older transactions are not
+        # separate future budgets that can each be changed.
         existing_change_keys = {(change.action, change.event_id) for change in changes}
+        flexible_groups: dict[str, list[Event]] = defaultdict(list)
         for (direction, category, _), group in history_groups.items():
-            if direction != "debit" or len(group) < 2 or category in profile.protected_categories:
+            if direction == "debit":
+                flexible_groups[category].extend(group)
+        for category, group in flexible_groups.items():
+            if len(group) < 2 or category in profile.protected_categories:
                 continue
             group.sort(key=lambda item: item.settlement_date)
             representative = group[-1]
@@ -472,7 +589,9 @@ class DecisionEngine:
                 continue
             if event.event_type in {"investment_purchase", "investment_sale", "investment_valuation", "refund"}:
                 continue
-            if event.linked_event_id or any(word in event.description.lower() for word in ("reversal", "authorization")):
+            if event.event_id in neutralized_debits or any(
+                word in event.description.lower() for word in ("reversal", "authorization")
+            ):
                 continue
             trailing_variable_total += self._home_amount(event, profile)
         safe_adjustment = max(ZERO, trailing_variable_total - variable_total).quantize(CENT)
@@ -520,6 +639,10 @@ class DecisionEngine:
     def _is_safe(forecast: Forecast, plan: CandidatePlan) -> bool:
         minimum = DecisionEngine._minimum_balance(forecast, plan.payments, plan.changes)
         plan.minimum_projected_balance = minimum
+        # The calendar-day variable-spend envelope intentionally overstates
+        # some timing risk. Its measured uncertainty is therefore allowed back
+        # when evaluating a complete plan, while amount_safe_to_pay remains the
+        # stricter pre-adjustment amount required by the output contract.
         return (
             minimum + forecast.variable_uncertainty
             >= forecast.minimum_balance + forecast.safe_adjustment
@@ -613,6 +736,10 @@ class DecisionEngine:
                         continue
                     if profile.max_installment_months is None or option.number_of_payments > profile.max_installment_months:
                         continue
+                    if option.first_payment_date < request.request_date:
+                        continue
+                    if option.number_of_payments > 1 and not option.frequency_days:
+                        continue
                     frequency = option.frequency_days or 0
                     payments = [
                         (option.first_payment_date + timedelta(days=frequency * index), option.payment_amount)
@@ -683,7 +810,6 @@ class DecisionEngine:
             for payment_date, amount in chosen.payments
         )
         changes_text = "|".join(change.text for change in chosen.changes) or "none"
-        floor = chosen.minimum_projected_balance or profile.minimum_balance
         if chosen.method == "wait":
             explanation = (
                 f"Wait until {human_date(chosen.payments[0][0])}, then pay "
@@ -694,8 +820,9 @@ class DecisionEngine:
             explanation = (
                 f"Use {len(chosen.payments)} installments of {profile.currency} "
                 f"{format_decimal(chosen.payments[0][1])}, starting "
-                f"{human_date(chosen.starts_on)}. This leaves at least "
-                f"{profile.currency} {format_decimal(floor)} available."
+                f"{human_date(chosen.starts_on)}; total payable is {profile.currency} "
+                f"{format_decimal(chosen.total_payable)}. The 90-day forecast protects the "
+                f"{profile.currency} {format_decimal(profile.minimum_balance)} minimum."
             )
         elif chosen.method == "partial_payment":
             explanation = (
@@ -708,7 +835,8 @@ class DecisionEngine:
             prefix = "Adjust the selected flexible spending, then " if chosen.changes else ""
             explanation = (
                 f"{prefix}pay {profile.currency} {format_decimal(request.amount)} today. "
-                f"This leaves at least {profile.currency} {format_decimal(floor)} available."
+                f"The 90-day forecast protects the {profile.currency} "
+                f"{format_decimal(profile.minimum_balance)} minimum."
             )
 
         return Decision(

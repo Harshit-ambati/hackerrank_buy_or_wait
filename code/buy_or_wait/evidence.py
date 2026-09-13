@@ -33,14 +33,25 @@ IMAGE_AMOUNTS: dict[str, Decimal] = {
 @dataclass(frozen=True)
 class SalaryEvidence:
     amount: Decimal | None = None
+    currency: str | None = None
     effective_date: date | None = None
     next_only: bool = False
     stopped: bool = False
+    one_time_amount: Decimal | None = None
+    one_time_currency: str | None = None
+
+
+@dataclass(frozen=True)
+class ConfirmedIncome:
+    amount: Decimal
+    currency: str
+    settlement_date: date
+    message_id: str
 
 
 DATE_RE = re.compile(r"\b(20\d{2}-\d{2}-\d{2})\b")
 CURRENCY_AMOUNT_RE = re.compile(
-    r"\b(?:INR|IDR|ZAR|USD|EUR)\s*([0-9][0-9,.]*)", re.IGNORECASE
+    r"\b(INR|IDR|ZAR|USD|EUR)\s*([0-9][0-9,.]*)", re.IGNORECASE
 )
 PERCENT_RE = re.compile(r"(?:by|sebesar)\s+([0-9]+(?:\.[0-9]+)?)%", re.IGNORECASE)
 
@@ -77,24 +88,74 @@ def parse_salary_evidence(messages: list[Message]) -> SalaryEvidence | None:
             for phrase in (
                 "employment has ended", "seasonal contract has ended",
                 "kontrak musiman saat ini telah berakhir",
+                "hubungan kerja anda telah berakhir",
             )
         )
         dates = DATE_RE.findall(text)
-        amounts = currency_amounts
-        amount_text = amounts[0].replace(",", "").rstrip(".") if amounts else ""
+        amount_text = currency_amounts[0][1].replace(",", "").rstrip(".") if currency_amounts else ""
         amount = Decimal(amount_text) if amount_text else None
+        currency = currency_amounts[0][0].upper() if currency_amounts else None
         effective = date.fromisoformat(dates[0]) if dates else None
         next_only = any(
             phrase in lower
             for phrase in (
                 "next salary is reduced", "temporary monthly pay",
-                "gaji bulanan sementara", "regular salary for the next payroll",
-                "gaji rutin anda untuk penggajian berikutnya",
+                "gaji bulanan sementara",
+                "receiving bank will convert", "bank penerima akan mengonversinya",
             )
         )
+        one_time_amount = None
+        one_time_currency = None
+        if len(currency_amounts) > 1 and any(
+            phrase in lower
+            for phrase in ("one-time arrears", "penyesuaian tunggakan satu kali")
+        ):
+            one_time_currency = currency_amounts[1][0].upper()
+            one_time_amount = Decimal(currency_amounts[1][1].replace(",", "").rstrip("."))
         if stopped or amount is not None or effective is not None:
-            current = SalaryEvidence(amount, effective, next_only, stopped)
+            current = SalaryEvidence(
+                amount=amount,
+                currency=currency,
+                effective_date=effective,
+                next_only=next_only,
+                stopped=stopped,
+                one_time_amount=one_time_amount,
+                one_time_currency=one_time_currency,
+            )
     return current
+
+
+def parse_confirmed_incomes(messages: list[Message]) -> list[ConfirmedIncome]:
+    """Extract one-time provider payments that are explicitly approved and dated."""
+    result: list[ConfirmedIncome] = []
+    for message in messages:
+        if message.source_type != "service_provider":
+            continue
+        lower = message.text.lower()
+        if not any(
+            phrase in lower
+            for phrase in (
+                "client approved an invoice payment",
+                "client approved an invoice",
+                "klien menyetujui pembayaran faktur",
+                "klien telah menyetujui pembayaran faktur",
+            )
+        ):
+            continue
+        amounts = CURRENCY_AMOUNT_RE.findall(message.text)
+        dates = DATE_RE.findall(message.text)
+        if not amounts or not dates:
+            continue
+        currency, amount_text = amounts[0]
+        result.append(
+            ConfirmedIncome(
+                amount=Decimal(amount_text.replace(",", "").rstrip(".")),
+                currency=currency.upper(),
+                settlement_date=date.fromisoformat(dates[0]),
+                message_id=message.message_id,
+            )
+        )
+    return result
 
 
 def parse_rent_increase(messages: list[Message]) -> Decimal | None:

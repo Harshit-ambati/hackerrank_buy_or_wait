@@ -3,6 +3,8 @@ from __future__ import annotations
 import csv
 import sys
 import unittest
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 
@@ -11,7 +13,12 @@ ROOT = CODE_DIR.parent
 sys.path.insert(0, str(CODE_DIR))
 
 from buy_or_wait.engine import DecisionEngine, OUTPUT_COLUMNS  # noqa: E402
-from buy_or_wait.evidence import IMAGE_AMOUNTS  # noqa: E402
+from buy_or_wait.evidence import (  # noqa: E402
+    IMAGE_AMOUNTS,
+    parse_confirmed_incomes,
+    parse_salary_evidence,
+)
+from buy_or_wait.models import Message, SpendingChange  # noqa: E402
 
 
 class DecisionEngineTests(unittest.TestCase):
@@ -57,6 +64,114 @@ class DecisionEngineTests(unittest.TestCase):
             self.assertEqual(250, len({row["request_id"] for row in rows}))
         finally:
             target.unlink(missing_ok=True)
+
+    def test_approved_invoice_message_becomes_one_confirmed_credit(self) -> None:
+        request = next(
+            item
+            for item in self.engine.load_requests(self.dataset / "requests.csv")
+            if item.request_id == "request_26"
+        )
+        forecast, _ = self.engine._build_forecast(request)
+        credits = [flow for flow in forecast.flows if flow.event_id == "message_18"]
+        self.assertEqual(1, len(credits))
+        self.assertEqual(Decimal("30780000"), credits[0].amount)
+        self.assertEqual(date(2025, 8, 15), credits[0].flow_date)
+
+    def test_payroll_arrears_are_counted_once(self) -> None:
+        request = next(
+            item
+            for item in self.engine.load_requests(self.dataset / "requests.csv")
+            if item.request_id == "request_28"
+        )
+        forecast, _ = self.engine._build_forecast(request)
+        arrears = [
+            flow for flow in forecast.flows
+            if flow.event_id == "message_salary_arrears"
+        ]
+        self.assertEqual(1, len(arrears))
+        self.assertEqual(Decimal("653.40"), arrears[0].amount)
+
+    def test_foreign_salary_and_one_time_arrears_are_distinguished(self) -> None:
+        message = Message(
+            message_id="m", user_id="u", request_id=None,
+            related_event_id=None, sent_at="2026-01-01T00:00:00Z",
+            source_type="employer",
+            text=(
+                "Regular salary for the next payroll is USD 1000. "
+                "The same payroll includes a one-time arrears adjustment of USD 250."
+            ),
+        )
+        evidence = parse_salary_evidence([message])
+        self.assertIsNotNone(evidence)
+        assert evidence is not None
+        self.assertEqual(Decimal("1000"), evidence.amount)
+        self.assertEqual("USD", evidence.currency)
+        self.assertEqual(Decimal("250"), evidence.one_time_amount)
+        self.assertFalse(evidence.next_only)
+
+    def test_unconfirmed_provider_payout_is_not_income(self) -> None:
+        message = Message(
+            message_id="m", user_id="u", request_id=None,
+            related_event_id=None, sent_at="2026-01-01T00:00:00Z",
+            source_type="service_provider",
+            text=(
+                "The next payout is still pending. The balance is not withdrawable "
+                "until it shows as completed."
+            ),
+        )
+        self.assertEqual([], parse_confirmed_incomes([message]))
+
+    def test_indonesian_employment_end_stops_salary(self) -> None:
+        message = Message(
+            message_id="m", user_id="u", request_id=None,
+            related_event_id=None, sent_at="2026-01-01T00:00:00Z",
+            source_type="employer",
+            text="Hubungan kerja Anda telah berakhir. Tidak ada pembayaran gaji rutin.",
+        )
+        evidence = parse_salary_evidence([message])
+        self.assertIsNotNone(evidence)
+        assert evidence is not None
+        self.assertTrue(evidence.stopped)
+
+    def test_irregular_flexible_budget_uses_latest_category_evidence(self) -> None:
+        request = next(
+            item
+            for item in self.engine.load_requests(self.dataset / "sample_requests.csv")
+            if item.request_id == "request_11"
+        )
+        _, changes = self.engine._build_forecast(request)
+        dining = [change for change in changes if change.category == "dining"]
+        self.assertEqual(["reduce_to:event_989:665950"], [item.text for item in dining])
+
+    def test_fractional_spending_change_keeps_currency_precision(self) -> None:
+        change = SpendingChange(
+            "reduce_to", "event_x", Decimal("47"), Decimal("23.5"), "streaming"
+        )
+        self.assertEqual("reduce_to:event_x:23.50", change.text)
+
+    def test_failed_debit_with_scheduled_retry_is_reserved_once(self) -> None:
+        request = next(
+            item
+            for item in self.engine.load_requests(self.dataset / "requests.csv")
+            if item.request_id == "request_55"
+        )
+        forecast, _ = self.engine._build_forecast(request)
+        ids = [flow.event_id for flow in forecast.flows]
+        self.assertEqual(1, ids.count("event_5169"))
+        self.assertNotIn("event_5168", ids)
+
+    def test_scheduled_retry_does_not_double_count_failed_debit(self) -> None:
+        request = next(
+            item
+            for item in self.engine.load_requests(self.dataset / "requests.csv")
+            if item.user_id == "user_55"
+        )
+        forecast, _ = self.engine._build_forecast(request)
+        retry_flows = [
+            flow for flow in forecast.flows
+            if flow.event_id in {"event_5168", "event_5169"}
+        ]
+        self.assertEqual(["event_5169"], [flow.event_id for flow in retry_flows])
 
 
 if __name__ == "__main__":
