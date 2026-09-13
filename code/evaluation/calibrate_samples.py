@@ -14,6 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from buy_or_wait.engine import DecisionEngine  # noqa: E402
+from buy_or_wait.ai_evidence import OnlineEvidenceResolver  # noqa: E402
 from buy_or_wait.models import CashFlow  # noqa: E402
 
 
@@ -22,7 +23,7 @@ DATASET = ROOT / "dataset"
 
 
 def main() -> int:
-    engine = DecisionEngine.from_directory(DATASET)
+    engine = DecisionEngine.from_directory(DATASET, OnlineEvidenceResolver.from_environment())
     truth = {
         row["request_id"]: row
         for row in csv.DictReader(

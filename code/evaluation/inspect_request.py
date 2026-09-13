@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from buy_or_wait.engine import DecisionEngine  # noqa: E402
+from buy_or_wait.ai_evidence import OnlineEvidenceResolver  # noqa: E402
 
 
 def main() -> int:
@@ -19,7 +20,9 @@ def main() -> int:
     parser.add_argument("--samples", action="store_true")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
-    engine = DecisionEngine.from_directory(root / "dataset")
+    engine = DecisionEngine.from_directory(
+        root / "dataset", OnlineEvidenceResolver.from_environment()
+    )
     filename = "sample_requests.csv" if args.samples else "requests.csv"
     request = next(
         row for row in engine.load_requests(root / "dataset" / filename)

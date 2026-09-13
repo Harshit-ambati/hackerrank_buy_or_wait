@@ -9,9 +9,9 @@ from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_DOWN
 from pathlib import Path
+from typing import Protocol
 
 from .evidence import (
-    IMAGE_AMOUNTS,
     failed_debit_remains_due,
     parse_confirmed_incomes,
     parse_rent_increase,
@@ -45,6 +45,12 @@ OUTPUT_COLUMNS = [
 ]
 ZERO = Decimal("0")
 CENT = Decimal("0.01")
+
+
+class EvidenceResolver(Protocol):
+    def extract_image_amount(self, image_path: Path, event: dict[str, str]) -> Decimal: ...
+
+    def normalize_messages(self, messages: list[Message]) -> list[Message]: ...
 
 
 def dec(value: str | None) -> Decimal | None:
@@ -93,7 +99,9 @@ class DecisionEngine:
         self.exchange_rates = exchange_rates
 
     @classmethod
-    def from_directory(cls, dataset: Path) -> "DecisionEngine":
+    def from_directory(
+        cls, dataset: Path, evidence_resolver: EvidenceResolver
+    ) -> "DecisionEngine":
         dataset = dataset.resolve()
         with (dataset / "financial_profiles.csv").open(encoding="utf-8-sig", newline="") as fh:
             profiles = {
@@ -120,7 +128,14 @@ class DecisionEngine:
             for row in csv.DictReader(fh):
                 amount = dec(row["amount"])
                 if amount is None and row["event_id"] in image_links:
-                    amount = IMAGE_AMOUNTS.get(image_links[row["event_id"]])
+                    image_id = image_links[row["event_id"]]
+                    amount = evidence_resolver.extract_image_amount(
+                        dataset / "media" / "images" / f"{image_id}.png", row
+                    )
+                if amount is None:
+                    raise ValueError(
+                        f"Event {row['event_id']} has no amount and no resolvable image evidence"
+                    )
                 events.append(
                     Event(
                         event_id=row["event_id"], user_id=row["user_id"],
@@ -161,6 +176,7 @@ class DecisionEngine:
                         text=row["message_text"],
                     )
                 )
+        messages = evidence_resolver.normalize_messages(messages)
 
         rates: dict[tuple[date, str, str], Decimal] = {}
         with (dataset / "exchange_rates.csv").open(encoding="utf-8-sig", newline="") as fh:

@@ -2,15 +2,29 @@
 
 ## Implemented solution
 
-This repository contains a deterministic, standard-library-only Python solution
-for **Buy or Wait?**. It reconstructs each user's financial state, resolves
-the supplied message and image evidence, forecasts cash flow, tests seller payment
-options, and writes a contract-valid `output.csv`.
+This repository contains an online AI evidence agent with a deterministic Python
+financial planner for **Buy or Wait?**. It reads a supplied dataset folder,
+extracts image and message evidence through OpenAI or Gemini, forecasts cash flow,
+tests seller payment options, and writes a contract-valid `output.csv`.
 
 ### Run
 
-Python 3.11 or newer is recommended. No third-party packages or API keys are
-required.
+Python 3.11 or newer is recommended. No third-party package is required, but at
+least one online evidence API key is mandatory. Production has no offline OCR or
+hardcoded-evidence fallback.
+
+PowerShell setup:
+
+```powershell
+$env:OPENAI_API_KEY="your-key"
+$env:GEMINI_API_KEY="your-key"
+python code/main.py --provider auto --dataset dataset --output output.csv
+```
+
+`auto` uses `AI_PROVIDER_ORDER` (default `openai,gemini`) and switches to the
+other configured provider if a request fails. Use `--provider openai` or
+`--provider gemini` to force one provider. Never commit keys or place real keys
+in `.env.example`.
 
 ```bash
 python code/main.py
@@ -40,7 +54,8 @@ On Windows PowerShell, the same commands work with `python` and backslashes.
 
 1. Load and type-check profiles, requests, financial events, payment options,
    dated exchange rates, messages, and image links.
-2. Fill the 16 image-backed blank event amounts from reviewed evidence facts.
+2. Extract image-backed blank amounts online with a vision-capable provider and
+   normalize message evidence into a strict JSON schema.
 3. Resolve cash state and linked lifecycles: reserve pending debits once, ignore
    pending credits, cancelled authorizations, refunded charges, and unrealized
    investments, and avoid double-counting a failed debit with its scheduled retry.
@@ -66,8 +81,9 @@ total. They are not charged a second time. A separate tax liability would be
 reserved only when the supplied events or messages contain a confirmed amount
 and settlement date; the engine does not invent an unsupported future tax.
 
-The planner is intentionally deterministic: the full run performs no network or
-model calls, and identical inputs produce identical output.
+Financial arithmetic, plan feasibility, and ranking remain deterministic. The
+evidence stage is online and model-backed; structured schemas and semantic
+validation prevent malformed evidence from reaching the planner.
 
 Starter repository for the **HackerRank Orchestrate** 24-hour hackathon (September 2026).
 
@@ -199,7 +215,8 @@ Your solution must:
 - not use organizer-only files or hardcoded labels
 - keep behavior deterministic where possible
 
-If you use API keys or secrets, read them from environment variables. Never hardcode secrets in the repo.
+OpenAI or Gemini credentials are required in production and must be read from
+environment variables. Never hardcode secrets in the repository.
 
 ---
 

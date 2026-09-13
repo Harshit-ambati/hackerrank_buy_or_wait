@@ -14,23 +14,45 @@ sys.path.insert(0, str(CODE_DIR))
 
 from buy_or_wait.engine import DecisionEngine, OUTPUT_COLUMNS  # noqa: E402
 from buy_or_wait.evidence import (  # noqa: E402
-    IMAGE_AMOUNTS,
     parse_confirmed_incomes,
     parse_salary_evidence,
 )
 from buy_or_wait.models import Message, SpendingChange  # noqa: E402
 
 
+TEST_IMAGE_AMOUNTS = {
+    "image_01": Decimal("4365000"), "image_02": Decimal("100000"),
+    "image_03": Decimal("41272"), "image_04": Decimal("2854"),
+    "image_05": Decimal("704.05"), "image_06": Decimal("1995"),
+    "image_07": Decimal("8528.10"), "image_08": Decimal("15339"),
+    "image_09": Decimal("723"), "image_10": Decimal("79679.26"),
+    "image_11": Decimal("3650"), "image_12": Decimal("33.50"),
+    "image_13": Decimal("2298"), "image_14": Decimal("4593"),
+    "image_15": Decimal("9968"), "image_16": Decimal("393.22"),
+}
+
+
+class FixtureEvidenceResolver:
+    """Deterministic test double; production always uses an online provider."""
+
+    def extract_image_amount(self, image_path: Path, event: dict[str, str]) -> Decimal:
+        del event
+        return TEST_IMAGE_AMOUNTS[image_path.stem]
+
+    def normalize_messages(self, messages: list[Message]) -> list[Message]:
+        return messages
+
+
 class DecisionEngineTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.dataset = ROOT / "dataset"
-        cls.engine = DecisionEngine.from_directory(cls.dataset)
+        cls.engine = DecisionEngine.from_directory(cls.dataset, FixtureEvidenceResolver())
 
     def test_all_image_backed_amounts_are_available(self) -> None:
         with (self.dataset / "images.csv").open(encoding="utf-8-sig", newline="") as fh:
             image_ids = {row["image_id"] for row in csv.DictReader(fh)}
-        self.assertEqual(image_ids, set(IMAGE_AMOUNTS))
+        self.assertEqual(image_ids, set(TEST_IMAGE_AMOUNTS))
 
     def test_public_sample_method_accuracy_is_high(self) -> None:
         sample_path = self.dataset / "sample_requests.csv"

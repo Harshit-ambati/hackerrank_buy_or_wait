@@ -9,11 +9,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from buy_or_wait.engine import DecisionEngine  # noqa: E402
+from buy_or_wait.ai_evidence import OnlineEvidenceResolver  # noqa: E402
 from buy_or_wait.models import CandidatePlan  # noqa: E402
 
 
 root = Path(__file__).resolve().parents[2]
-engine = DecisionEngine.from_directory(root / "dataset")
+engine = DecisionEngine.from_directory(
+    root / "dataset", OnlineEvidenceResolver.from_environment()
+)
 requests = {row.request_id: row for row in engine.load_requests(root / "dataset" / "sample_requests.csv")}
 for request_id in sys.argv[1:]:
     request = requests[request_id]

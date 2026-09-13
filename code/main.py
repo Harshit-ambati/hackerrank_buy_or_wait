@@ -12,6 +12,7 @@ if str(CODE_DIR) not in sys.path:
     sys.path.insert(0, str(CODE_DIR))
 
 from buy_or_wait.engine import DecisionEngine  # noqa: E402
+from buy_or_wait.ai_evidence import EvidenceAPIError, OnlineEvidenceResolver  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,14 +42,32 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print a compact summary for every generated decision.",
     )
+    parser.add_argument(
+        "--provider",
+        choices=("auto", "openai", "gemini"),
+        default="auto",
+        help="Required online evidence provider; auto enables configured failover.",
+    )
+    parser.add_argument(
+        "--usage-report",
+        type=Path,
+        default=repo_root / "code" / "evaluation" / "usage_report.md",
+        help="Destination for token-usage reporting from this run.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    engine = DecisionEngine.from_directory(args.dataset)
-    decisions = engine.run(args.dataset / args.requests)
-    engine.write_output(decisions, args.output)
+    try:
+        resolver = OnlineEvidenceResolver.from_environment(args.provider)
+        engine = DecisionEngine.from_directory(args.dataset, resolver)
+        decisions = engine.run(args.dataset / args.requests)
+        engine.write_output(decisions, args.output)
+        resolver.write_usage_report(args.usage_report, len(decisions))
+    except (EvidenceAPIError, FileNotFoundError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     if args.explain:
         for decision in decisions:
             print(
