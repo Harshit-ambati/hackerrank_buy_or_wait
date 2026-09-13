@@ -53,6 +53,19 @@ On Windows PowerShell, the same commands work with `python` and backslashes.
 7. Rank safe plans by the challenge rules and validate the emitted schema,
    schedules, user preferences, and change targets.
 
+### Essential obligations and taxes
+
+Before recommending any purchase or service, the forecast reserves confirmed
+and recurring education fees, childcare or family support, housing or rent,
+loan repayments, utilities, groceries, insurance, transport, and ordinary
+monthly spending. Categories marked as protected or as a financial priority
+are never offered as spending cuts.
+
+Tax-labelled receipt and invoice rows use the document's final tax-inclusive
+total. They are not charged a second time. A separate tax liability would be
+reserved only when the supplied events or messages contain a confirmed amount
+and settlement date; the engine does not invent an unsupported future tax.
+
 The planner is intentionally deterministic: the full run performs no network or
 model calls, and identical inputs produce identical output.
 

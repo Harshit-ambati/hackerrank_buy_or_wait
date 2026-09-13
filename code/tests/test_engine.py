@@ -65,6 +65,38 @@ class DecisionEngineTests(unittest.TestCase):
         finally:
             target.unlink(missing_ok=True)
 
+    def test_protected_priorities_are_never_offered_as_spending_changes(self) -> None:
+        for request in self.engine.load_requests(self.dataset / "requests.csv"):
+            profile = self.engine.profiles[request.user_id]
+            _, changes = self.engine._build_forecast(request)
+            protected = profile.protected_categories | profile.priorities
+            self.assertFalse(
+                [change.text for change in changes if change.category in protected],
+                request.request_id,
+            )
+
+    def test_scheduled_school_fee_is_reserved_before_purchase(self) -> None:
+        request = next(
+            item
+            for item in self.engine.load_requests(self.dataset / "sample_requests.csv")
+            if item.request_id == "request_04"
+        )
+        forecast, _ = self.engine._build_forecast(request)
+        school_fees = [flow for flow in forecast.flows if flow.event_id == "event_357"]
+        self.assertEqual(1, len(school_fees))
+        self.assertEqual(Decimal("-1704300"), school_fees[0].amount)
+
+    def test_explanation_names_reserved_essential_commitments(self) -> None:
+        request = next(
+            item
+            for item in self.engine.load_requests(self.dataset / "sample_requests.csv")
+            if item.request_id == "request_11"
+        )
+        explanation = self.engine.decide(request).decision_explanation
+        self.assertIn("education fees", explanation)
+        self.assertIn("housing costs", explanation)
+        self.assertIn("normal monthly spending", explanation)
+
     def test_approved_invoice_message_becomes_one_confirmed_credit(self) -> None:
         request = next(
             item

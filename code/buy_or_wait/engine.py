@@ -767,9 +767,43 @@ class DecisionEngine:
             tuple(change.text for change in plan.changes),
         )
 
+    @staticmethod
+    def _commitment_summary(forecast: Forecast, profile: Profile) -> str:
+        """Describe the essential obligations reserved before a purchase."""
+        labels = {
+            "education": "education fees",
+            "family_support": "childcare and family support",
+            "housing": "housing costs",
+            "rent": "rent",
+            "debt_repayment": "loan repayments",
+            "utilities": "utilities",
+            "groceries": "groceries",
+            "insurance": "insurance",
+            "transport": "transport",
+        }
+        relevant = profile.protected_categories | profile.priorities
+        present = {
+            flow.category
+            for flow in forecast.flows
+            if flow.amount < ZERO and flow.category in relevant
+        }
+        ordered = [
+            labels[category]
+            for category in labels
+            if category in present
+        ]
+        if any(flow.category == "variable_spending" for flow in forecast.flows):
+            ordered.append("normal monthly spending")
+        if not ordered:
+            return "scheduled and recurring commitments"
+        if len(ordered) == 1:
+            return ordered[0]
+        return ", ".join(ordered[:-1]) + f", and {ordered[-1]}"
+
     def decide(self, request: Request) -> Decision:
         profile = self.profiles[request.user_id]
         forecast, possible_changes = self._build_forecast(request)
+        commitments = self._commitment_summary(forecast, profile)
         baseline_minimum = self._minimum_balance(forecast)
         safe_today = max(
             ZERO,
@@ -791,8 +825,8 @@ class DecisionEngine:
                 earliest_date_for_full_payment=earliest_full.isoformat() if earliest_full else "",
                 spending_changes_needed="none",
                 decision_explanation=(
-                    f"Do not make this payment by {human_date(request.desired_completion_date)}. "
-                    f"None of the eligible options keeps the {profile.currency} "
+                    f"After reserving {commitments}, do not make this payment by "
+                    f"{human_date(request.desired_completion_date)}. None of the eligible options keeps the {profile.currency} "
                     f"{format_decimal(profile.minimum_balance)} minimum protected."
                 ),
             )
@@ -814,28 +848,29 @@ class DecisionEngine:
             explanation = (
                 f"Wait until {human_date(chosen.payments[0][0])}, then pay "
                 f"{profile.currency} {format_decimal(request.amount)} in full. Paying sooner would "
-                f"put the {profile.currency} {format_decimal(profile.minimum_balance)} minimum at risk."
+                f"put the {profile.currency} {format_decimal(profile.minimum_balance)} minimum at risk after "
+                f"reserving {commitments}."
             )
         elif chosen.method == "installments":
             explanation = (
                 f"Use {len(chosen.payments)} installments of {profile.currency} "
                 f"{format_decimal(chosen.payments[0][1])}, starting "
                 f"{human_date(chosen.starts_on)}; total payable is {profile.currency} "
-                f"{format_decimal(chosen.total_payable)}. The 90-day forecast protects the "
+                f"{format_decimal(chosen.total_payable)}. After reserving {commitments}, the forecast protects the "
                 f"{profile.currency} {format_decimal(profile.minimum_balance)} minimum."
             )
         elif chosen.method == "partial_payment":
             explanation = (
                 f"Pay {profile.currency} {format_decimal(chosen.payments[0][1])} now and "
                 f"{profile.currency} {format_decimal(chosen.payments[1][1])} on "
-                f"{human_date(chosen.payments[1][0])}. This keeps the "
+                f"{human_date(chosen.payments[1][0])}. After reserving {commitments}, this keeps the "
                 f"{profile.currency} {format_decimal(profile.minimum_balance)} minimum protected."
             )
         else:
             prefix = "Adjust the selected flexible spending, then " if chosen.changes else ""
             explanation = (
                 f"{prefix}pay {profile.currency} {format_decimal(request.amount)} today. "
-                f"The 90-day forecast protects the {profile.currency} "
+                f"After reserving {commitments}, the forecast protects the {profile.currency} "
                 f"{format_decimal(profile.minimum_balance)} minimum."
             )
 
