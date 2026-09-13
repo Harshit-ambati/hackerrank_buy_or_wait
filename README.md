@@ -24,6 +24,15 @@ Every evidence request uses Gemini and fails closed if the key, network, image,
 or structured response is unavailable. Never commit keys or place real keys in
 `.env.example`.
 
+Browser interface:
+
+```powershell
+python code/web.py
+```
+
+Then open `http://127.0.0.1:8765`. The Gemini key stays in the server process and
+is never sent to or displayed in the browser page.
+
 ```bash
 python code/main.py
 ```
