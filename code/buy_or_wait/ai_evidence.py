@@ -33,6 +33,7 @@ class UsageEntry:
 
 STANDARD_TOKEN_PRICES_USD_PER_MILLION = {
     ("gemini", "gemini-2.5-flash"): (Decimal("0.30"), Decimal("2.50")),
+    ("gemini", "gemini-2.5-flash-lite"): (Decimal("0.10"), Decimal("0.40")),
 }
 
 
@@ -40,7 +41,7 @@ def _post_json(url: str, headers: dict[str, str], payload: dict[str, Any], timeo
     request = urllib.request.Request(
         url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST"
     )
-    max_retries = int(os.getenv("AI_MAX_RETRIES", "4"))
+    max_retries = int(os.getenv("AI_MAX_RETRIES", "12"))
     for attempt in range(max_retries + 1):
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:

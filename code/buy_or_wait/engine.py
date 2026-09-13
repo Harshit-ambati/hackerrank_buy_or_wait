@@ -565,7 +565,11 @@ class DecisionEngine:
         # only reconsider confirmed income dates, never an arbitrary earlier day.
         income_dates = sorted({
             flow.flow_date for flow in forecast.flows
-            if flow.amount > ZERO and flow.category == "salary"
+            if (
+                flow.amount > ZERO
+                and flow.category == "salary"
+                and forecast.start_date <= flow.flow_date <= forecast.end_date
+            )
         })
         if not income_dates and (
             self._minimum_balance(forecast, [(forecast.start_date, amount)])

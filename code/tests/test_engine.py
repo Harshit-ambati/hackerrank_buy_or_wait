@@ -95,6 +95,19 @@ class DecisionEngineTests(unittest.TestCase):
         requests = self.engine.load_requests(self.dataset / "requests.csv")
         validate_decisions(self.engine.run(self.dataset / "requests.csv"), requests)
 
+    def test_earliest_full_payment_never_precedes_request(self) -> None:
+        requests = {
+            row.request_id: row
+            for row in self.engine.load_requests(self.dataset / "requests.csv")
+        }
+        for decision in self.engine.run(self.dataset / "requests.csv"):
+            if decision.earliest_date_for_full_payment:
+                self.assertGreaterEqual(
+                    date.fromisoformat(decision.earliest_date_for_full_payment),
+                    requests[decision.request_id].request_date,
+                    decision.request_id,
+                )
+
     def test_protected_priorities_are_never_offered_as_spending_changes(self) -> None:
         for request in self.engine.load_requests(self.dataset / "requests.csv"):
             profile = self.engine.profiles[request.user_id]
