@@ -1,4 +1,4 @@
-"""Required online multimodal evidence extraction with provider failover."""
+"""Required online multimodal evidence extraction through Gemini."""
 
 from __future__ import annotations
 
@@ -30,7 +30,6 @@ class UsageEntry:
 
 
 STANDARD_TOKEN_PRICES_USD_PER_MILLION = {
-    ("openai", "gpt-5.4-mini"): (Decimal("0.75"), Decimal("4.50")),
     ("gemini", "gemini-2.5-flash"): (Decimal("0.30"), Decimal("2.50")),
 }
 
@@ -58,50 +57,6 @@ class _Backend:
         image_path: Path | None = None,
     ) -> tuple[dict[str, Any], UsageEntry]:
         raise NotImplementedError
-
-
-class _OpenAIBackend(_Backend):
-    provider = "openai"
-
-    def __init__(self, api_key: str, model: str, timeout: int) -> None:
-        self.api_key, self.model, self.timeout = api_key, model, timeout
-
-    def generate(
-        self, prompt: str, schema_name: str, schema: dict[str, Any],
-        image_path: Path | None = None,
-    ) -> tuple[dict[str, Any], UsageEntry]:
-        content: list[dict[str, Any]] = [{"type": "input_text", "text": prompt}]
-        if image_path is not None:
-            mime = mimetypes.guess_type(image_path.name)[0] or "image/png"
-            encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
-            content.append({"type": "input_image", "image_url": f"data:{mime};base64,{encoded}"})
-        response = _post_json(
-            "https://api.openai.com/v1/responses",
-            {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-            {
-                "model": self.model,
-                "store": False,
-                "input": [{"role": "user", "content": content}],
-                "text": {"format": {
-                    "type": "json_schema", "name": schema_name,
-                    "strict": True, "schema": schema,
-                }},
-            },
-            self.timeout,
-        )
-        texts = [
-            part.get("text", "")
-            for item in response.get("output", [])
-            for part in item.get("content", [])
-            if part.get("type") == "output_text"
-        ]
-        if not texts:
-            raise EvidenceAPIError("OpenAI returned no structured output text")
-        usage = response.get("usage", {})
-        return json.loads("".join(texts)), UsageEntry(
-            self.provider, self.model, int(usage.get("input_tokens", 0)),
-            int(usage.get("output_tokens", 0)),
-        )
 
 
 class _GeminiBackend(_Backend):
@@ -148,7 +103,7 @@ class _GeminiBackend(_Backend):
 
 
 class OnlineEvidenceResolver:
-    """Resolve unstructured input online; production has no offline fallback."""
+    """Resolve unstructured input through Gemini; there is no offline fallback."""
 
     def __init__(self, backends: list[_Backend], batch_size: int = 20) -> None:
         if not backends:
@@ -156,32 +111,15 @@ class OnlineEvidenceResolver:
         self.backends, self.batch_size, self.usage = backends, batch_size, []
 
     @classmethod
-    def from_environment(cls, provider: str = "auto") -> "OnlineEvidenceResolver":
-        provider = provider.lower()
-        if provider not in {"auto", "openai", "gemini"}:
-            raise EvidenceAPIError("AI provider must be auto, openai, or gemini")
+    def from_environment(cls) -> "OnlineEvidenceResolver":
         timeout = int(os.getenv("AI_REQUEST_TIMEOUT_SECONDS", "90"))
-        available: dict[str, _Backend] = {}
-        if os.getenv("OPENAI_API_KEY"):
-            available["openai"] = _OpenAIBackend(
-                os.environ["OPENAI_API_KEY"], os.getenv("OPENAI_MODEL", "gpt-5.4-mini"), timeout
-            )
-        if os.getenv("GEMINI_API_KEY"):
-            available["gemini"] = _GeminiBackend(
-                os.environ["GEMINI_API_KEY"], os.getenv("GEMINI_MODEL", "gemini-2.5-flash"), timeout
-            )
-        if provider == "auto":
-            order = [part.strip().lower() for part in os.getenv(
-                "AI_PROVIDER_ORDER", "openai,gemini"
-            ).split(",")]
-            backends = [available[name] for name in order if name in available]
-            required = "OPENAI_API_KEY and/or GEMINI_API_KEY"
-        else:
-            backends = [available[provider]] if provider in available else []
-            required = "OPENAI_API_KEY" if provider == "openai" else "GEMINI_API_KEY"
-        if not backends:
-            raise EvidenceAPIError(f"Online-only mode requires {required}")
-        return cls(backends, int(os.getenv("AI_MESSAGE_BATCH_SIZE", "20")))
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise EvidenceAPIError("Online-only mode requires GEMINI_API_KEY")
+        backend = _GeminiBackend(
+            api_key, os.getenv("GEMINI_MODEL", "gemini-2.5-flash"), timeout
+        )
+        return cls([backend], int(os.getenv("AI_MESSAGE_BATCH_SIZE", "20")))
 
     def _generate(
         self, prompt: str, schema_name: str, schema: dict[str, Any],

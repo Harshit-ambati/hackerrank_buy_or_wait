@@ -4,27 +4,25 @@
 
 This repository contains an online AI evidence agent with a deterministic Python
 financial planner for **Buy or Wait?**. It reads a supplied dataset folder,
-extracts image and message evidence through OpenAI or Gemini, forecasts cash flow,
+extracts image and message evidence through Gemini, forecasts cash flow,
 tests seller payment options, and writes a contract-valid `output.csv`.
 
 ### Run
 
-Python 3.11 or newer is recommended. No third-party package is required, but at
-least one online evidence API key is mandatory. Production has no offline OCR or
+Python 3.11 or newer is recommended. No third-party package is required, but a
+Gemini API key is mandatory. Production has no offline OCR or
 hardcoded-evidence fallback.
 
 PowerShell setup:
 
 ```powershell
-$env:OPENAI_API_KEY="your-key"
 $env:GEMINI_API_KEY="your-key"
-python code/main.py --provider auto --dataset dataset --output output.csv
+python code/main.py --dataset dataset --output output.csv
 ```
 
-`auto` uses `AI_PROVIDER_ORDER` (default `openai,gemini`) and switches to the
-other configured provider if a request fails. Use `--provider openai` or
-`--provider gemini` to force one provider. Never commit keys or place real keys
-in `.env.example`.
+Every evidence request uses Gemini and fails closed if the key, network, image,
+or structured response is unavailable. Never commit keys or place real keys in
+`.env.example`.
 
 ```bash
 python code/main.py
@@ -215,8 +213,8 @@ Your solution must:
 - not use organizer-only files or hardcoded labels
 - keep behavior deterministic where possible
 
-OpenAI or Gemini credentials are required in production and must be read from
-environment variables. Never hardcode secrets in the repository.
+Gemini credentials are required in production and must be read from an
+environment variable. Never hardcode secrets in the repository.
 
 ---
 

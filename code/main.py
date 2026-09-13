@@ -43,12 +43,6 @@ def parse_args() -> argparse.Namespace:
         help="Print a compact summary for every generated decision.",
     )
     parser.add_argument(
-        "--provider",
-        choices=("auto", "openai", "gemini"),
-        default="auto",
-        help="Required online evidence provider; auto enables configured failover.",
-    )
-    parser.add_argument(
         "--usage-report",
         type=Path,
         default=repo_root / "code" / "evaluation" / "usage_report.md",
@@ -60,7 +54,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     try:
-        resolver = OnlineEvidenceResolver.from_environment(args.provider)
+        resolver = OnlineEvidenceResolver.from_environment()
         engine = DecisionEngine.from_directory(args.dataset, resolver)
         decisions = engine.run(args.dataset / args.requests)
         engine.write_output(decisions, args.output)

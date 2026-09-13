@@ -19,15 +19,6 @@ from buy_or_wait.ai_evidence import (  # noqa: E402
 )
 
 
-class FailingBackend:
-    provider = "openai"
-    model = "test-openai"
-
-    def generate(self, prompt, schema_name, schema, image_path=None):
-        del prompt, schema_name, schema, image_path
-        raise EvidenceAPIError("temporary failure")
-
-
 class SuccessfulBackend:
     provider = "gemini"
     model = "test-gemini"
@@ -44,10 +35,10 @@ class OnlineEvidenceTests(unittest.TestCase):
     def test_online_only_mode_rejects_missing_keys(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(EvidenceAPIError):
-                OnlineEvidenceResolver.from_environment("auto")
+                OnlineEvidenceResolver.from_environment()
 
-    def test_auto_mode_fails_over_between_providers(self) -> None:
-        resolver = OnlineEvidenceResolver([FailingBackend(), SuccessfulBackend()])
+    def test_configured_gemini_provider_extracts_image_amount(self) -> None:
+        resolver = OnlineEvidenceResolver([SuccessfulBackend()])
         amount = resolver.extract_image_amount(
             ROOT / "dataset" / "media" / "images" / "image_05.png",
             {
