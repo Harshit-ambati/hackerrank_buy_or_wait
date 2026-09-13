@@ -18,6 +18,7 @@ from buy_or_wait.evidence import (  # noqa: E402
     parse_salary_evidence,
 )
 from buy_or_wait.models import Message, SpendingChange  # noqa: E402
+from buy_or_wait.validation import validate_decisions, validate_input_dataset  # noqa: E402
 
 
 TEST_IMAGE_AMOUNTS = {
@@ -86,6 +87,13 @@ class DecisionEngineTests(unittest.TestCase):
             self.assertEqual(250, len({row["request_id"] for row in rows}))
         finally:
             target.unlink(missing_ok=True)
+
+    def test_input_and_submission_validation_cover_full_dataset(self) -> None:
+        dimensions = validate_input_dataset(self.dataset, "requests.csv")
+        self.assertEqual(250, dimensions.rows["requests.csv"])
+        self.assertEqual(25342, dimensions.rows["financial_events.csv"])
+        requests = self.engine.load_requests(self.dataset / "requests.csv")
+        validate_decisions(self.engine.run(self.dataset / "requests.csv"), requests)
 
     def test_protected_priorities_are_never_offered_as_spending_changes(self) -> None:
         for request in self.engine.load_requests(self.dataset / "requests.csv"):
@@ -186,6 +194,24 @@ class DecisionEngineTests(unittest.TestCase):
         self.assertIsNotNone(evidence)
         assert evidence is not None
         self.assertTrue(evidence.stopped)
+
+    def test_remaining_household_salary_replaces_ended_income(self) -> None:
+        message = Message(
+            message_id="m", user_id="u", request_id=None,
+            related_event_id=None, sent_at="2026-01-01T00:00:00Z",
+            source_type="employer",
+            text=(
+                "One household employment record has ended. The remaining confirmed "
+                "monthly salary is INR 148000.\nNormalized evidence: employment has ended; "
+                "Remaining confirmed monthly salary is INR 148000 after one household "
+                "employment ended."
+            ),
+        )
+        evidence = parse_salary_evidence([message])
+        self.assertIsNotNone(evidence)
+        assert evidence is not None
+        self.assertFalse(evidence.stopped)
+        self.assertEqual(Decimal("148000"), evidence.amount)
 
     def test_irregular_flexible_budget_uses_latest_category_evidence(self) -> None:
         request = next(

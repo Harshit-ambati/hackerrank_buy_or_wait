@@ -11,8 +11,10 @@ CODE_DIR = Path(__file__).resolve().parent
 if str(CODE_DIR) not in sys.path:
     sys.path.insert(0, str(CODE_DIR))
 
-from buy_or_wait.engine import DecisionEngine  # noqa: E402
 from buy_or_wait.ai_evidence import EvidenceAPIError, OnlineEvidenceResolver  # noqa: E402
+from buy_or_wait.config import load_environment  # noqa: E402
+from buy_or_wait.pipeline import run_pipeline  # noqa: E402
+from buy_or_wait.runtime_logging import configure_logging  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,12 +55,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    load_environment(CODE_DIR.parent / ".env")
+    logger = configure_logging()
     try:
         resolver = OnlineEvidenceResolver.from_environment()
-        engine = DecisionEngine.from_directory(args.dataset, resolver)
-        decisions = engine.run(args.dataset / args.requests)
-        engine.write_output(decisions, args.output)
-        resolver.write_usage_report(args.usage_report, len(decisions))
+        decisions = run_pipeline(
+            args.dataset, args.requests, args.output, args.usage_report, resolver, logger
+        )
     except (EvidenceAPIError, FileNotFoundError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

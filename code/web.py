@@ -16,7 +16,13 @@ if str(CODE_DIR) not in sys.path:
     sys.path.insert(0, str(CODE_DIR))
 
 from buy_or_wait.ai_evidence import EvidenceAPIError, OnlineEvidenceResolver  # noqa: E402
-from buy_or_wait.engine import DecisionEngine  # noqa: E402
+from buy_or_wait.config import load_environment  # noqa: E402
+from buy_or_wait.pipeline import run_pipeline  # noqa: E402
+from buy_or_wait.runtime_logging import configure_logging  # noqa: E402
+
+
+load_environment(PROJECT_ROOT / ".env")
+LOGGER = configure_logging()
 
 
 PAGE = """<!doctype html>
@@ -153,10 +159,10 @@ class Handler(BaseHTTPRequestHandler):
             if Path(requests_name).name != requests_name:
                 raise ValueError("Requests must be a filename inside the dataset folder")
             resolver = OnlineEvidenceResolver.from_environment()
-            engine = DecisionEngine.from_directory(dataset, resolver)
-            decisions = engine.run(dataset / requests_name)
-            engine.write_output(decisions, output)
-            resolver.write_usage_report(CODE_DIR / "evaluation" / "usage_report.md", len(decisions))
+            decisions = run_pipeline(
+                dataset, requests_name, output,
+                CODE_DIR / "evaluation" / "usage_report.md", resolver, LOGGER,
+            )
             statuses = Counter(item.affordability_status for item in decisions)
             self._json(200, {
                 "rows": len(decisions), "output": str(output), "statuses": dict(statuses)
@@ -165,7 +171,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": str(exc)})
 
     def log_message(self, message: str, *args: object) -> None:
-        print(f"browser: {message % args}")
+        LOGGER.debug("browser: %s", message % args)
 
 
 def main() -> int:
@@ -174,7 +180,7 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"Buy or Wait browser UI: http://{args.host}:{args.port}", flush=True)
+    LOGGER.info("browser interface ready: http://%s:%d", args.host, args.port)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

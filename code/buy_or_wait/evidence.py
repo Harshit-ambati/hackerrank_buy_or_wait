@@ -63,7 +63,15 @@ def parse_salary_evidence(messages: list[Message]) -> SalaryEvidence | None:
         currency_amounts = CURRENCY_AMOUNT_RE.findall(text)
         if any(phrase in lower for phrase in ("bonus is still", "bonus kuartalan")) and not currency_amounts:
             continue
-        stopped = any(
+        remaining_salary = any(
+            phrase in lower
+            for phrase in (
+                "remaining confirmed monthly salary",
+                "remaining monthly salary is confirmed",
+                "sisa gaji bulanan yang dikonfirmasi",
+            )
+        )
+        stopped = not remaining_salary and any(
             phrase in lower
             for phrase in (
                 "employment has ended", "seasonal contract has ended",

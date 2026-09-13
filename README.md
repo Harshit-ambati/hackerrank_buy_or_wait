@@ -20,6 +20,10 @@ $env:GEMINI_API_KEY="your-key"
 python code/main.py --dataset dataset --output output.csv
 ```
 
+Alternatively, copy `.env.example` to `.env` and set `GEMINI_API_KEY` there.
+The project loads this ignored file automatically and never overrides variables
+already exported by the shell.
+
 Every evidence request uses Gemini and fails closed if the key, network, image,
 or structured response is unavailable. Never commit keys or place real keys in
 `.env.example`.
@@ -59,21 +63,45 @@ On Windows PowerShell, the same commands work with `python` and backslashes.
 
 ### Decision pipeline
 
-1. Load and type-check profiles, requests, financial events, payment options,
+1. Validate schemas, identifiers, and cross-file relationships before any API call.
+2. Load and type-check profiles, requests, financial events, payment options,
    dated exchange rates, messages, and image links.
-2. Extract image-backed blank amounts online with a vision-capable provider and
+3. Extract image-backed blank amounts online with a vision-capable provider and
    normalize message evidence into a strict JSON schema.
-3. Resolve cash state and linked lifecycles: reserve pending debits once, ignore
+4. Resolve cash state and linked lifecycles: reserve pending debits once, ignore
    pending credits, cancelled authorizations, refunded charges, and unrealized
    investments, and avoid double-counting a failed debit with its scheduled retry.
-4. Infer supported monthly commitments and salary cycles. Message evidence can
+5. Infer supported monthly commitments and salary cycles. Message evidence can
    move or replace payroll, stop ended income, add one-time arrears or approved
    invoice income, convert dated foreign salary, or adjust recurring rent.
-5. Forecast fixed commitments and calendar-shaped variable spending for 90 days.
-6. Compute safe capacity and evaluate full, partial, installment, wait, and
+6. Forecast fixed commitments and calendar-shaped variable spending for 90 days.
+7. Compute safe capacity and evaluate full, partial, installment, wait, and
    permitted spending-change candidates.
-7. Rank safe plans by the challenge rules and validate the emitted schema,
+8. Rank safe plans by the challenge rules and validate the emitted schema,
    schedules, user preferences, and change targets.
+9. Validate one decision per request, write the submission, and record model usage.
+
+Runtime logs are intentionally concise. They report input dimensions, the selected
+Gemini model and deterministic policy, inference start/completion, and submission
+validation. There are no training or cross-validation logs because the submitted
+system is an inference-only financial rules engine; the solved sample labels are
+used only by evaluation tests.
+
+### Code organization
+
+```text
+code/buy_or_wait/
+├── config.py            # Project-local environment loading
+├── data_loading.py      # Typed CSV loading and evidence attachment
+├── validation.py        # Input and prediction-contract validation
+├── ai_evidence.py       # Gemini preprocessing for messages and images
+├── evidence.py          # Canonical evidence parsing
+├── engine.py            # Forecast features and deterministic inference
+├── pipeline.py          # Shared CLI/browser orchestration
+├── submission.py        # output.csv generation
+├── runtime_logging.py   # Concise stage logging
+└── models.py            # Typed domain objects
+```
 
 ### Essential obligations and taxes
 
